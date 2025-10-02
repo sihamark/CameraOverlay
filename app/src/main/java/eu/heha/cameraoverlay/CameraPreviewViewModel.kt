@@ -4,8 +4,10 @@ import android.Manifest.permission.CAMERA
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager.PERMISSION_GRANTED
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Log
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
 import androidx.camera.core.Preview
@@ -20,7 +22,10 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import java.io.FileDescriptor
 
 class CameraPreviewViewModel : ViewModel() {
@@ -102,16 +107,49 @@ class CameraPreviewViewModel : ViewModel() {
     }
 
     fun loadImageFromUri(context: Context, imageUri: Uri) {
-        val image = context.contentResolver.openFileDescriptor(imageUri, "r")?.use {
-            val fileDescriptor: FileDescriptor = it.fileDescriptor
-            BitmapFactory.decodeFileDescriptor(fileDescriptor)
-        } ?: return
+        viewModelScope.launch(IO) {
+            val image = context.contentResolver.openFileDescriptor(imageUri, "r")?.use {
+                val fileDescriptor: FileDescriptor = it.fileDescriptor
+                BitmapFactory.decodeFileDescriptor(fileDescriptor)
+            } ?: return@launch
 
-        state = state.copy(
-            overlayState = state.overlayState.copy(
-                image = BitmapPainter(image.asImageBitmap()),
-                transform = Transform()
+            launch {
+                val imageFile = context.imageFile()
+                val tempFile = context.filesDir.resolve("cachedImage.png")
+                tempFile.delete()
+                tempFile.outputStream().buffered().use { output ->
+                    image.compress(Bitmap.CompressFormat.PNG, 100, output)
+                }
+                imageFile.delete()
+                tempFile.copyTo(imageFile)
+            }
+
+            state = state.copy(
+                overlayState = state.overlayState.copy(
+                    image = BitmapPainter(image.asImageBitmap()),
+                    transform = Transform()
+                )
             )
-        )
+        }
     }
+
+    fun loadImage(context: Context) {
+        viewModelScope.launch(IO) {
+            try {
+                val image = context.imageFile().inputStream().buffered().use { input ->
+                    BitmapFactory.decodeStream(input)
+                }
+                state = state.copy(
+                    overlayState = state.overlayState.copy(
+                        image = BitmapPainter(image.asImageBitmap()),
+                        transform = Transform()
+                    )
+                )
+            } catch (e: Exception) {
+                Log.e("model", "Unable to load image", e)
+            }
+        }
+    }
+
+    private fun Context.imageFile() = filesDir.resolve("image.png")
 }

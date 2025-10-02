@@ -78,6 +78,9 @@ fun CameraOverlayApp() {
             val sheetState = rememberModalBottomSheetState()
             var isSettingsSheetVisible by remember { mutableStateOf(false) }
             val model: CameraPreviewViewModel = viewModel()
+            LaunchedEffect(model) {
+                model.loadImage(context)
+            }
             val mediaRequest = rememberLauncherForActivityResult(PickVisualMedia()) { imageUri ->
                 if (imageUri != null) model.loadImageFromUri(context, imageUri)
             }
