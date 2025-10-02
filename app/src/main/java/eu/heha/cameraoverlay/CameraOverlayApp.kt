@@ -1,6 +1,9 @@
 package eu.heha.cameraoverlay
 
 import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.camera.compose.CameraXViewfinder
 import androidx.camera.core.SurfaceRequest
 import androidx.compose.animation.AnimatedVisibility
@@ -19,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -44,6 +48,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -67,14 +72,17 @@ fun CameraOverlayApp() {
         Scaffold(
             contentWindowInsets = WindowInsets()
         ) { innerPadding ->
+            val context = LocalContext.current
             val sheetState = rememberModalBottomSheetState()
             var isSettingsSheetVisible by remember { mutableStateOf(false) }
             val model: CameraPreviewViewModel = viewModel()
+            val mediaRequest = rememberLauncherForActivityResult(PickVisualMedia()) { imageUri ->
+                if (imageUri != null) model.loadImageFromUri(context, imageUri)
+            }
             Box(
                 contentAlignment = Alignment.Companion.Center,
                 modifier = Modifier.Companion.padding(innerPadding)
             ) {
-                val context = LocalContext.current
                 LifecycleResumeEffect(Unit) {
                     model.checkCameraPermission(context)
                     onPauseOrDispose { }
@@ -122,7 +130,10 @@ fun CameraOverlayApp() {
                         zoom = model.state.overlayState.zoom,
                         zoomRange = model.state.overlayState.zoomRange,
                         onZoomChanged = model::onChangeZoom,
-                        onClickResetTransform = model::resetTransform
+                        onClickResetTransform = model::resetTransform,
+                        onClickSelectImage = {
+                            mediaRequest.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
+                        }
                     )
                 }
             }
@@ -210,7 +221,7 @@ private fun ImageOverlay(
             .fillMaxSize()
     ) {
         Image(
-            painterResource(R.drawable.overlay),
+            overlayState.image ?: painterResource(R.drawable.overlay),
             contentDescription = null,
             contentScale = ContentScale.Inside,
             modifier = Modifier
@@ -247,7 +258,8 @@ fun SettingsContent(
     zoom: Float,
     zoomRange: ClosedFloatingPointRange<Float>,
     onZoomChanged: (Float) -> Unit,
-    onClickResetTransform: () -> Unit
+    onClickResetTransform: () -> Unit,
+    onClickSelectImage: () -> Unit
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -286,6 +298,12 @@ fun SettingsContent(
             Spacer(Modifier.width(8.dp))
             Text("Reset Transform")
         }
+
+        OutlinedButton(onClickSelectImage) {
+            Icon(Icons.Outlined.Image, "Select Image")
+            Spacer(Modifier.width(8.dp))
+            Text("Select Image")
+        }
     }
 }
 
@@ -296,6 +314,7 @@ data class State(
 )
 
 data class OverlayState(
+    val image: Painter? = null,
     val alpha: Float = 0.5f,
     val zoom: Float = 1f,
     val zoomRange: ClosedFloatingPointRange<Float> = 1f..2f,

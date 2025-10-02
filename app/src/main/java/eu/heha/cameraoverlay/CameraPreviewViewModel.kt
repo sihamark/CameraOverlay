@@ -4,6 +4,8 @@ import android.Manifest.permission.CAMERA
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager.PERMISSION_GRANTED
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
 import androidx.camera.core.Preview
@@ -12,11 +14,14 @@ import androidx.camera.lifecycle.awaitInstance
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.awaitCancellation
+import java.io.FileDescriptor
 
 class CameraPreviewViewModel : ViewModel() {
 
@@ -93,6 +98,20 @@ class CameraPreviewViewModel : ViewModel() {
         state = state.copy(
             isCameraPermissionGranted =
                 ContextCompat.checkSelfPermission(context, CAMERA) == PERMISSION_GRANTED
+        )
+    }
+
+    fun loadImageFromUri(context: Context, imageUri: Uri) {
+        val image = context.contentResolver.openFileDescriptor(imageUri, "r")?.use {
+            val fileDescriptor: FileDescriptor = it.fileDescriptor
+            BitmapFactory.decodeFileDescriptor(fileDescriptor)
+        } ?: return
+
+        state = state.copy(
+            overlayState = state.overlayState.copy(
+                image = BitmapPainter(image.asImageBitmap()),
+                transform = Transform()
+            )
         )
     }
 }
