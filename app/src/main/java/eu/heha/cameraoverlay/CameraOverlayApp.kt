@@ -1,9 +1,8 @@
 package eu.heha.cameraoverlay
 
-import android.Manifest
-import android.content.pm.PackageManager
 import androidx.activity.compose.LocalActivity
 import androidx.camera.compose.CameraXViewfinder
+import androidx.camera.core.SurfaceRequest
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -16,7 +15,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeContentPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -24,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -47,12 +49,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import eu.heha.cameraoverlay.ui.theme.CameraOverlayTheme
 import kotlinx.coroutines.delay
@@ -70,47 +69,34 @@ fun CameraOverlayApp() {
         ) { innerPadding ->
             val sheetState = rememberModalBottomSheetState()
             var isSettingsSheetVisible by remember { mutableStateOf(false) }
-            val viewModel: CameraPreviewViewModel = viewModel()
+            val model: CameraPreviewViewModel = viewModel()
             Box(
                 contentAlignment = Alignment.Companion.Center,
                 modifier = Modifier.Companion.padding(innerPadding)
             ) {
                 val context = LocalContext.current
-                val activity = LocalActivity.current
-                var isPermissionGranted by remember { mutableStateOf(false) }
                 LifecycleResumeEffect(Unit) {
-                    isPermissionGranted = ContextCompat
-                        .checkSelfPermission(
-                            context,
-                            Manifest.permission.CAMERA
-                        ) == PackageManager.PERMISSION_GRANTED
+                    model.checkCameraPermission(context)
                     onPauseOrDispose { }
                 }
-                if (!isPermissionGranted) {
-                    Column {
-                        Text(
-                            "Grant the Camera Permission!!!",
-                            style = MaterialTheme.typography.headlineMedium
-                        )
-                        Spacer(Modifier.Companion.height(16.dp))
-                        Button(onClick = {
-                            if (activity != null) {
-                                ActivityCompat.requestPermissions(
-                                    activity, arrayOf(Manifest.permission.CAMERA), 0
-                                )
-                            }
-                        }) {
-                            Text("Request Permission")
+                if (!model.state.isCameraPermissionGranted) {
+                    val activity = LocalActivity.current
+                    PermissionPrompt(
+                        onClickRequest = {
+                            model.requestCameraPermission(activity)
                         }
-                    }
+                    )
                 } else {
+                    val lifecycleOwner = LocalLifecycleOwner.current
                     CameraPreviewContent(
-                        viewModel = viewModel,
+                        surfaceRequest = model.state.surfaceRequest,
+                        onStart = { model.bindToCamera(context, lifecycleOwner) },
+                        lifecycleOwner = lifecycleOwner,
                         modifier = Modifier.Companion.fillMaxSize()
                     )
                     ImageOverlay(
-                        viewModel.overlayParameters,
-                        onChangeTransform = viewModel::onChangeTransform
+                        model.state.overlayState,
+                        onChangeTransform = model::onChangeTransform
                     )
                     AnimatedVisibility(
                         !isSettingsSheetVisible,
@@ -131,11 +117,12 @@ fun CameraOverlayApp() {
                     sheetState = sheetState
                 ) {
                     SettingsContent(
-                        alpha = viewModel.overlayParameters.alpha,
-                        onAlphaChanged = viewModel::onChangeAlpha,
-                        zoom = viewModel.overlayParameters.zoom,
-                        zoomRange = viewModel.overlayParameters.zoomRange,
-                        onZoomChanged = viewModel::onChangeZoom
+                        alpha = model.state.overlayState.alpha,
+                        onAlphaChanged = model::onChangeAlpha,
+                        zoom = model.state.overlayState.zoom,
+                        zoomRange = model.state.overlayState.zoomRange,
+                        onZoomChanged = model::onChangeZoom,
+                        onClickResetTransform = model::resetTransform
                     )
                 }
             }
@@ -144,8 +131,22 @@ fun CameraOverlayApp() {
 }
 
 @Composable
+private fun PermissionPrompt(onClickRequest: () -> Unit) {
+    Column {
+        Text(
+            "Grant the Camera Permission!!!",
+            style = MaterialTheme.typography.headlineMedium
+        )
+        Spacer(Modifier.Companion.height(16.dp))
+        Button(onClickRequest) {
+            Text("Request Permission")
+        }
+    }
+}
+
+@Composable
 private fun ImageOverlay(
-    overlayParameters: OverlayParameters,
+    overlayState: OverlayState,
     onChangeTransform: (Transform) -> Unit
 ) {
     fun Offset.rotateBy(angle: Float): Offset {
@@ -155,11 +156,20 @@ private fun ImageOverlay(
         return Offset((x * cos - y * sin).toFloat(), (x * sin + y * cos).toFloat())
     }
 
-    val transform = overlayParameters.transform
+    val transform = overlayState.transform
+
 
     var offset by remember { mutableStateOf(transform.offset) }
     var zoom by remember { mutableFloatStateOf(transform.zoom) }
     var angle by remember { mutableFloatStateOf(transform.angle) }
+
+    LaunchedEffect(transform) {
+        if (!transform.sameAs(offset, zoom, angle)) {
+            offset = transform.offset
+            zoom = transform.zoom
+            angle = transform.angle
+        }
+    }
 
     LaunchedEffect(offset, zoom, angle) {
         if (!transform.sameAs(offset, zoom, angle)) {
@@ -204,7 +214,7 @@ private fun ImageOverlay(
             contentDescription = null,
             contentScale = ContentScale.Inside,
             modifier = Modifier
-                .alpha(overlayParameters.alpha)
+                .alpha(overlayState.alpha)
                 .fillMaxSize()
         )
     }
@@ -212,14 +222,13 @@ private fun ImageOverlay(
 
 @Composable
 private fun CameraPreviewContent(
-    viewModel: CameraPreviewViewModel,
+    surfaceRequest: SurfaceRequest?,
+    onStart: suspend () -> Unit,
+    lifecycleOwner: LifecycleOwner,
     modifier: Modifier = Modifier,
-    lifecycleOwner: LifecycleOwner = LocalLifecycleOwner.current
 ) {
-    val surfaceRequest by viewModel.surfaceRequest.collectAsStateWithLifecycle()
-    val context = LocalContext.current
     LaunchedEffect(lifecycleOwner) {
-        viewModel.bindToCamera(context.applicationContext, lifecycleOwner)
+        onStart()
     }
 
     surfaceRequest?.let { request ->
@@ -237,14 +246,17 @@ fun SettingsContent(
     onAlphaChanged: (Float) -> Unit,
     zoom: Float,
     zoomRange: ClosedFloatingPointRange<Float>,
-    onZoomChanged: (Float) -> Unit
+    onZoomChanged: (Float) -> Unit,
+    onClickResetTransform: () -> Unit
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.padding(vertical = 16.dp, horizontal = 32.dp)
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
+
         Spacer(Modifier.height(16.dp))
+
         Text("Alpha", style = MaterialTheme.typography.labelLarge)
         val alphaState = rememberSliderState(
             value = alpha, steps = 20, valueRange = 0f..1f
@@ -254,7 +266,9 @@ fun SettingsContent(
         }
         Slider(alphaState, Modifier.fillMaxWidth())
         Text("%.2f".format(alphaState.value), style = MaterialTheme.typography.bodyMedium)
+
         Spacer(Modifier.height(16.dp))
+
         Text("Zoom", style = MaterialTheme.typography.labelLarge)
         val zoomState = rememberSliderState(
             value = zoom, steps = 100, valueRange = zoomRange
@@ -264,10 +278,24 @@ fun SettingsContent(
         }
         Slider(zoomState, Modifier.fillMaxWidth())
         Text("%.2f".format(zoomState.value), style = MaterialTheme.typography.bodyMedium)
+
+        Spacer(Modifier.height(16.dp))
+
+        OutlinedButton(onClickResetTransform) {
+            Icon(Icons.Default.Refresh, "Reset Transform")
+            Spacer(Modifier.width(8.dp))
+            Text("Reset Transform")
+        }
     }
 }
 
-data class OverlayParameters(
+data class State(
+    val isCameraPermissionGranted: Boolean = false,
+    val surfaceRequest: SurfaceRequest? = null,
+    val overlayState: OverlayState = OverlayState()
+)
+
+data class OverlayState(
     val alpha: Float = 0.5f,
     val zoom: Float = 1f,
     val zoomRange: ClosedFloatingPointRange<Float> = 1f..2f,
