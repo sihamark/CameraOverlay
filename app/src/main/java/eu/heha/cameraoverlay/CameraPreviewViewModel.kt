@@ -1,6 +1,7 @@
 package eu.heha.cameraoverlay
 
 import android.content.Context
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
 import androidx.camera.core.Preview
 import androidx.camera.core.SurfaceRequest
@@ -25,14 +26,12 @@ class CameraPreviewViewModel : ViewModel() {
     private val _surfaceRequest = MutableStateFlow<SurfaceRequest?>(null)
     val surfaceRequest: StateFlow<SurfaceRequest?> = _surfaceRequest
 
+    private var camera: Camera? = null
+
     private val cameraPreviewUseCase = Preview.Builder().build().apply {
         setSurfaceProvider { newSurfaceRequest ->
             _surfaceRequest.update { newSurfaceRequest }
         }
-    }
-
-    fun onChangeTransform(transform: Transform) {
-        overlayParameters = overlayParameters.copy(transform = transform)
     }
 
     suspend fun bindToCamera(appContext: Context, lifecycleOwner: LifecycleOwner) {
@@ -41,8 +40,14 @@ class CameraPreviewViewModel : ViewModel() {
             lifecycleOwner, DEFAULT_BACK_CAMERA, cameraPreviewUseCase
         )
 
+        this.camera = camera
+
         camera.cameraInfo.zoomState.value?.let {
             camera.cameraControl.setZoomRatio(it.minZoomRatio)
+            overlayParameters = overlayParameters.copy(
+                zoom = it.minZoomRatio,
+                zoomRange = it.minZoomRatio..it.maxZoomRatio
+            )
         }
 
         // Cancellation signals we're done with the camera
@@ -51,5 +56,18 @@ class CameraPreviewViewModel : ViewModel() {
         } finally {
             processCameraProvider.unbindAll()
         }
+    }
+
+    fun onChangeTransform(transform: Transform) {
+        overlayParameters = overlayParameters.copy(transform = transform)
+    }
+
+    fun onChangeAlpha(newAlpha: Float) {
+        overlayParameters = overlayParameters.copy(alpha = newAlpha)
+    }
+
+    fun onChangeZoom(newZoom: Float) {
+        camera?.cameraControl?.setZoomRatio(newZoom)
+        overlayParameters = overlayParameters.copy(zoom = newZoom)
     }
 }

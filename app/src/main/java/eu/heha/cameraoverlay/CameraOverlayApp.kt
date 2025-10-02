@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.LocalActivity
 import androidx.camera.compose.CameraXViewfinder
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
@@ -11,15 +12,27 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeContentPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberSliderState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,16 +55,22 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import eu.heha.cameraoverlay.ui.theme.CameraOverlayTheme
+import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.time.Duration.Companion.seconds
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CameraOverlayApp() {
     CameraOverlayTheme {
         Scaffold(
             contentWindowInsets = WindowInsets()
         ) { innerPadding ->
+            val sheetState = rememberModalBottomSheetState()
+            var isSettingsSheetVisible by remember { mutableStateOf(false) }
+            val viewModel: CameraPreviewViewModel = viewModel()
             Box(
                 contentAlignment = Alignment.Companion.Center,
                 modifier = Modifier.Companion.padding(innerPadding)
@@ -85,14 +104,38 @@ fun CameraOverlayApp() {
                         }
                     }
                 } else {
-                    val viewModel: CameraPreviewViewModel = viewModel()
                     CameraPreviewContent(
                         viewModel = viewModel,
                         modifier = Modifier.Companion.fillMaxSize()
                     )
                     ImageOverlay(
                         viewModel.overlayParameters,
-                        viewModel::onChangeTransform
+                        onChangeTransform = viewModel::onChangeTransform
+                    )
+                    AnimatedVisibility(
+                        !isSettingsSheetVisible,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .safeContentPadding()
+                    ) {
+                        IconButton({ isSettingsSheetVisible = true }) {
+                            Icon(Icons.Default.Settings, "Open Settings")
+                        }
+                    }
+                }
+            }
+
+            if (isSettingsSheetVisible) {
+                ModalBottomSheet(
+                    onDismissRequest = { isSettingsSheetVisible = false },
+                    sheetState = sheetState
+                ) {
+                    SettingsContent(
+                        alpha = viewModel.overlayParameters.alpha,
+                        onAlphaChanged = viewModel::onChangeAlpha,
+                        zoom = viewModel.overlayParameters.zoom,
+                        zoomRange = viewModel.overlayParameters.zoomRange,
+                        onZoomChanged = viewModel::onChangeZoom
                     )
                 }
             }
@@ -113,38 +156,45 @@ private fun ImageOverlay(
     }
 
     val transform = overlayParameters.transform
+
+    var offset by remember { mutableStateOf(transform.offset) }
+    var zoom by remember { mutableFloatStateOf(transform.zoom) }
+    var angle by remember { mutableFloatStateOf(transform.angle) }
+
+    LaunchedEffect(offset, zoom, angle) {
+        if (!transform.sameAs(offset, zoom, angle)) {
+            delay(0.3.seconds)
+            onChangeTransform(Transform(offset, zoom, angle))
+        }
+    }
+
     Box(
         Modifier
             .pointerInput(Unit) {
                 detectTransformGestures(
                     onGesture = { centroid, pan, gestureZoom, gestureRotate ->
-                        val oldScale = transform.zoom
-                        val newScale = transform.zoom * gestureZoom
-
+                        val oldScale = zoom
+                        val newScale = zoom * gestureZoom
                         // For natural zooming and rotating, the centroid of the gesture should
                         // be the fixed point where zooming and rotating occurs.
                         // We compute where the centroid was (in the pre-transformed coordinate
                         // space), and then compute where it will be after this delta.
                         // We then compute what the new offset should be to keep the centroid
                         // visually stationary for rotating and zooming, and also apply the pan.
-                        onChangeTransform(
-                            Transform(
-                                offset = (transform.offset + centroid / oldScale)
-                                    .rotateBy(gestureRotate) -
-                                        (centroid / newScale + pan / oldScale),
-                                zoom = newScale,
-                                angle = transform.angle + gestureRotate
-                            )
-                        )
+                        offset =
+                            (offset + centroid / oldScale).rotateBy(gestureRotate) -
+                                    (centroid / newScale + pan / oldScale)
+                        zoom = newScale
+                        angle += gestureRotate
                     }
                 )
             }
             .graphicsLayer {
-                translationX = -transform.offset.x * transform.zoom
-                translationY = -transform.offset.y * transform.zoom
-                scaleX = transform.zoom
-                scaleY = transform.zoom
-                rotationZ = transform.angle
+                translationX = -offset.x * zoom
+                translationY = -offset.y * zoom
+                scaleX = zoom
+                scaleY = zoom
+                rotationZ = angle
                 transformOrigin = TransformOrigin(0f, 0f)
             }
             .fillMaxSize()
@@ -180,8 +230,47 @@ private fun CameraPreviewContent(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsContent(
+    alpha: Float,
+    onAlphaChanged: (Float) -> Unit,
+    zoom: Float,
+    zoomRange: ClosedFloatingPointRange<Float>,
+    onZoomChanged: (Float) -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.padding(vertical = 16.dp, horizontal = 32.dp)
+    ) {
+        Text("Settings", style = MaterialTheme.typography.headlineMedium)
+        Spacer(Modifier.height(16.dp))
+        Text("Alpha", style = MaterialTheme.typography.labelLarge)
+        val alphaState = rememberSliderState(
+            value = alpha, steps = 20, valueRange = 0f..1f
+        )
+        LaunchedEffect(alphaState.value) {
+            onAlphaChanged(alphaState.value)
+        }
+        Slider(alphaState, Modifier.fillMaxWidth())
+        Text("%.2f".format(alphaState.value), style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(16.dp))
+        Text("Zoom", style = MaterialTheme.typography.labelLarge)
+        val zoomState = rememberSliderState(
+            value = zoom, steps = 100, valueRange = zoomRange
+        )
+        LaunchedEffect(zoomState.value) {
+            onZoomChanged(zoomState.value)
+        }
+        Slider(zoomState, Modifier.fillMaxWidth())
+        Text("%.2f".format(zoomState.value), style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
 data class OverlayParameters(
     val alpha: Float = 0.5f,
+    val zoom: Float = 1f,
+    val zoomRange: ClosedFloatingPointRange<Float> = 1f..2f,
     val transform: Transform = Transform()
 )
 
@@ -189,4 +278,8 @@ data class Transform(
     val offset: Offset = Offset.Zero,
     val zoom: Float = 1f,
     val angle: Float = 0f
-)
+) {
+    fun sameAs(
+        offset: Offset, zoom: Float, angle: Float
+    ) = this.offset == offset && this.zoom == zoom && this.angle == angle
+}
