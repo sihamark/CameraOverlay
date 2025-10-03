@@ -9,6 +9,7 @@ import androidx.camera.core.SurfaceRequest
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -54,7 +55,7 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -148,14 +149,21 @@ fun CameraOverlayApp() {
 
 @Composable
 private fun PermissionPrompt(onClickRequest: () -> Unit) {
-    Column {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp)
+    ) {
         Text(
             "Grant the Camera Permission!!!",
-            style = MaterialTheme.typography.headlineMedium
+            style = MaterialTheme.typography.titleLarge,
+            textAlign = TextAlign.Center
         )
         Spacer(Modifier.Companion.height(16.dp))
         Button(onClickRequest) {
-            Text("Request Permission")
+            Text("Request Permission", textAlign = TextAlign.Center)
         }
     }
 }
@@ -172,8 +180,11 @@ private fun ImageOverlay(
         return Offset((x * cos - y * sin).toFloat(), (x * sin + y * cos).toFloat())
     }
 
-    val transform = overlayState.transform
+    if (overlayState.image == null) {
+        return
+    }
 
+    val transform = overlayState.transform
 
     var offset by remember { mutableStateOf(transform.offset) }
     var zoom by remember { mutableFloatStateOf(transform.zoom) }
@@ -225,8 +236,9 @@ private fun ImageOverlay(
             }
             .fillMaxSize()
     ) {
+
         Image(
-            overlayState.image ?: painterResource(R.drawable.overlay),
+            overlayState.image,
             contentDescription = null,
             contentScale = ContentScale.Inside,
             modifier = Modifier
@@ -268,7 +280,8 @@ fun SettingsContent(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.padding(vertical = 16.dp, horizontal = 32.dp)
+        modifier = Modifier
+            .padding(vertical = 16.dp, horizontal = 32.dp)
             .verticalScroll(rememberScrollState())
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
